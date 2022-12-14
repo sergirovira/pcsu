@@ -1,12 +1,7 @@
 #include <random>
-#include "psu_v1.h"
 #include "openfhe.h"
 
-#include <chrono>
-using namespace std;
-
 using namespace lbcrypto;
-using namespace std::chrono;
 
 
 /// @brief This computes x^y (mod p) with the fast exponentiation algorithm
@@ -14,15 +9,15 @@ using namespace std::chrono;
 /// @param exp exponent of the power
 /// @param cryptoContext crypto context of the used scheme
 /// @param keyPair pair of keys 
-/// @param N size of the sets
-/// @return returns a ciphertext containing the result of x^y (mod p)
+/// @param n upper bound on the size of the sets
+/// @return returns a ciphertext containing the result of base^exp (mod p)
 Ciphertext<DCRTPoly>  exponentiation(Ciphertext<DCRTPoly> base,
-                        long int exp, CryptoContext<DCRTPoly> cryptoContext, KeyPair<DCRTPoly> keyPair, size_t N)
+                        long int exp, CryptoContext<DCRTPoly> cryptoContext, KeyPair<DCRTPoly> keyPair, size_t n)
 {
     
     std::vector<int64_t> vectorOfInts1;
 
-    for (size_t i = 0; i < N*N; ++i) {
+    for (size_t i = 0; i < n*n; ++i) {
         vectorOfInts1.push_back(1);
     }
 
@@ -30,138 +25,113 @@ Ciphertext<DCRTPoly>  exponentiation(Ciphertext<DCRTPoly> base,
 
     auto t = cryptoContext->Encrypt(keyPair.publicKey, plaintext1);
 
-    int mult = 0;
-    int squares = 0;
-
     while (exp > 0)
     {
         if (exp % 2 != 0) {
             t = cryptoContext->EvalMult(t, base);
-            mult += 1;
         }
 
- 
         base = cryptoContext->EvalMult(base, base);
-        squares += 1;
         exp /= 2;
     }
 
-    std::cout << "MULTS: " << mult << std::endl;
-    std::cout << "SQUARES: " << squares << std::endl;
-
     return t;
-
 }
 
 /// @brief this generates the rotated plaintext of a set 
 /// @param list vector containing the elements of the set
 /// @param cryptoContext crypto context of the used scheme
-/// @param N size of the sets
-/// @return returns a plaintext containing N rotated copies of the set, one for each possible cyclic rotation of the set
-Plaintext get_rotated_plaintext(std::vector<int64_t> list, CryptoContext<DCRTPoly> cryptoContext, size_t N){
-
-    std::vector<int64_t> rotated_list;
-
-    //cout << "N: "<< N << endl;
+/// @param n upper bound on the size of the sets
+/// @return returns a plaintext containing n rotated copies of the set, one for each possible cyclic rotation of the set
+Plaintext get_rotated_plaintext(std::vector<int64_t> list, CryptoContext<DCRTPoly> cryptoContext, size_t n){
+    for (size_t i = list.size(); i < n; ++i) list.push_back(0); //padding
     
-    for (size_t i = 0; i < N; ++i){
-        //cout << "i: "<< i << endl;
-        for (size_t j = i*N; j < (i+1)*N; ++j){
-            rotated_list.push_back(list[(j-i)%N]);
-            //cout << "j: "<< (j-i)%N << endl;
+    std::vector<int64_t> rotated_list;
+    
+    for (size_t i = 0; i < n; ++i) {
+        for (size_t j = i*n; j < (i+1)*n; ++j) { 
+            rotated_list.push_back(list[(j-i)%n]);
         }
     }
-    
-    Plaintext ptxt = cryptoContext->MakePackedPlaintext(rotated_list);
-    
-    return ptxt;
 
-    return 0;
+    Plaintext ptxt = cryptoContext->MakePackedPlaintext(rotated_list);
+
+    return ptxt;
 }
 
-/// @brief this generates a plaintext containing N copies of the set
+/// @brief this generates a plaintext containing n copies of the set
 /// @param list vector containing the elements of the set
 /// @param cryptoContext crypto context of the used scheme
-/// @param N size of the sets
-/// @return returns a plaintext containing N copies of the set
-Plaintext get_non_rotated_plaintext(std::vector<int64_t> list, CryptoContext<DCRTPoly> cryptoContext, size_t N){
-
+/// @param n upper bound on the size of the sets
+/// @return returns a plaintext containing n copies of the set
+Plaintext get_non_rotated_plaintext(std::vector<int64_t> list, CryptoContext<DCRTPoly> cryptoContext, size_t n){
+    for (size_t i = list.size(); i < n; ++i) list.push_back(0); //padding
     std::vector<int64_t> rotated_list;
     
-    for (size_t i = 0; i < N; ++i){
-        for (size_t j = 0; j < N; ++j){
+    for (size_t i = 0; i < n; ++i) {
+        for (size_t j = 0; j < n; ++j) { 
             rotated_list.push_back(list[j]);
         }
     }
-    
+
     Plaintext ptxt = cryptoContext->MakePackedPlaintext(rotated_list);
     
     return ptxt;
-
-    return 0;
 }
 
-/// remove N
-Plaintext get_simple_plaintext(std::vector<int64_t> list, CryptoContext<DCRTPoly> cryptoContext, size_t N) {
+/// @brief this generates a plaintext containing the given list
+/// @param list vector containing the elements to be encoded in the plaintext
+/// @param cryptoContext crypto context of the used scheme
+/// @return returns a plaintext containing the list
+Plaintext get_simple_plaintext(std::vector<int64_t> list, CryptoContext<DCRTPoly> cryptoContext) {
     Plaintext ptxt = cryptoContext->MakePackedPlaintext(list);
 
     return ptxt;
 }
 
-/// *********change name to encrypted_psu
-/// @brief This computes PSU(a, b)
-/// @param set_a rotated plaintext of the first set to encrypt
-/// @param set_b plaintext containing N copies of the second set
+/// @brief This computes PSU(a, b) over encrypted sets
+/// @param set_a rotated ciphertext of the first set to encrypt
+/// @param set_b ciphertext containing n copies of the second set
 /// @param cryptoContext crypto context of the used scheme
 /// @param keyPair pair of keys 
-/// @param N size of the sets
-/// @return returns a ciphertext containing encryption of 0s and/or 1s
-Ciphertext<DCRTPoly> PSU(Ciphertext<DCRTPoly> set_a, Ciphertext<DCRTPoly> set_b, long int exp, CryptoContext<DCRTPoly> cryptoContext, KeyPair<DCRTPoly> keyPair, size_t N) {
-
+/// @param n upper bound on the size of the sets
+/// @return returns a ciphertext containing encryptions of 0's and/or 1's
+Ciphertext<DCRTPoly> encrypted_psu(Ciphertext<DCRTPoly> set_a, Ciphertext<DCRTPoly> set_b, long int exp, CryptoContext<DCRTPoly> cryptoContext, KeyPair<DCRTPoly> keyPair, size_t n) {
     auto ciphertext_sub = cryptoContext->EvalSub(set_a, set_b);
-    auto ciphertext_fermat = exponentiation(ciphertext_sub, exp, cryptoContext, keyPair, N);
+    auto ciphertext_fermat = exponentiation(ciphertext_sub, exp, cryptoContext, keyPair, n);
 
     return ciphertext_fermat;
 }
 
-/// @brief This collapses the N*N list Dec(PSU(a, b)) into an N list
+/// @brief This collapses the n*n list Dec(PSU(a, b)) into an n list
 /// @param list decrypted output of PSU
 /// @param cryptoContext crypto context of the used scheme
-/// @param N size of the sets
-/// @return returns a plaintext containing a list of size N with 0s and/or 1s
-Plaintext MultiplyMany(Plaintext list, CryptoContext<DCRTPoly> cryptoContext, size_t N) {
+/// @param n upper bound on the size of the sets
+/// @return returns a plaintext containing a list of size n with 0's and/or 1's
+Plaintext MultiplyMany(Plaintext list, CryptoContext<DCRTPoly> cryptoContext, size_t n) {
     std::vector<int64_t> rotated_list;
     rotated_list = list->GetPackedValue();
-    /*
-    std::cout << "Decrypted result of PSU (size N*N):" << std::endl;
-    for (size_t i = 0; i < N*N; ++i) std::cout << rotated_list[i] << ' ';
-    std::cout << std::endl;
-    */
-    std::vector<int64_t> vec_psu(N, 1);
-    for (size_t i = 0; i < N; ++i) {
-        for (size_t j = i; j < N*N; j += N) {
+
+    std::vector<int64_t> vec_psu(n, 1);
+    for (size_t i = 0; i < n; ++i) {
+        for (size_t j = i; j < n*n; j += n) {
             if (rotated_list[j] == 0) vec_psu[i] = 0;
         }
     }
-    /*
-    std::cout << "Result of MultiplyMany(PSU) (size N):" << std::endl;
-    for (size_t i = 0; i < N; ++i) std::cout << vec_psu[i] << ' ';
-    std::cout << std::endl;
-    */
+
     Plaintext psu = cryptoContext->MakePackedPlaintext(vec_psu);
 
     return psu;
 }
 
 int main() {
-    
-    //PARAMETER GENERATION AND CONTEXT SETUP
 
-    const size_t SET_SIZE = pow(2, 7);
+    //parameter generation and context setup
+    size_t set_size = 124;
+    //128 classical security bits
     CCParams<CryptoContextBFVRNS> parameters;
     parameters.SetPlaintextModulus(65537);
-    //parameters.SetPlaintextModulus(2147483647);
-    parameters.SetMultiplicativeDepth(20); //log2(SET_SIZE)+log2(24)+1 multiplications
+    parameters.SetMultiplicativeDepth(20); 
     parameters.SetMaxRelinSkDeg(3);
     parameters.SetMultiplicationTechnique(HPS);
 
@@ -177,328 +147,230 @@ int main() {
     SecurityLevel securitylevel = parameters.GetSecurityLevel();
     std::cout << "Security level of " << securitylevel << " bits" << std::endl;
 
-    // Generate the relinearization key
-    cryptoContext->EvalMultKeysGen(keyPair.secretKey);
-    //cryptoContext->EvalSumKeyGen(keyPair.secretKey, keyPair.publicKey);
+    const size_t exp = 65536;
 
-    // Generate the rotation evaluation keys
-    // left shift positive index, right shift negative index
-    //int size = pow(2, 2);
-    //cryptoContext->EvalRotateKeyGen(keyPair.secretKey, {-size, size});
+    //generate the relinearization key
+    cryptoContext->EvalMultKeysGen(keyPair.secretKey);
 
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_int_distribution<> distrib(1, 1 << 16); //need to change 23 to 26 to allow 8 decimal digits
-    //std::uniform_int_distribution<> distrib(1, 1 << 4); //need to change 23 to 26 to allow 8 decimal digits
+    std::uniform_int_distribution<> distrib(1, 1 << 13); 
 
-    const size_t N_PARTIES = 3;
+    const size_t n_parties = 3;
 
-    //std::cout << "We will compute the PSU of " << N_PARTIES << " parties each with a set of " << SET_SIZE << " elements." << std::endl;
-
-    // Generate one random set for each party
-    std::vector<std::vector<int64_t>> parties(N_PARTIES);
-
-    for (size_t i = 0; i < N_PARTIES; ++i) {
-        for (size_t j = 0; j < SET_SIZE; ++j) {
-            parties[i].push_back(distrib(gen));
+    //generate one random set for each party
+    std::vector<std::vector<int64_t>> parties(n_parties);
+    std::vector<std::set<int64_t>> set_parties(n_parties);
+    
+    for (size_t i = 0; i < n_parties; ++i) {
+        for (size_t j = 0; j < set_size; ++j) {
+            set_parties[i].insert(distrib(gen));
         }
     }
 
-    //Plaintext ptxt = get_rotated_plaintext(parties[0], cryptoContext, SET_SIZE);
-    //std::cout << "Plaintext rotated: " << ptxt << std::endl;
-
-    std::vector<int64_t> vectorOfInts1;
-    for (size_t i = 0; i < SET_SIZE; ++i) {
-        vectorOfInts1.push_back(1);
+    for (size_t i = 0; i < n_parties; ++i) {
+        for (auto it = set_parties[i].begin(); it != set_parties[i].end(); ++it) {
+            parties[i].push_back(*it);
+        }
     }
     
-    // First plaintext vector is encoded
-    //std::vector<int64_t> vectorOfInts1 = {62537,62537,62537,62537};
-    //Plaintext plaintext1               = cryptoContext->MakePackedPlaintext(vectorOfInts1);
-    // Second plaintext vector is encoded
-    //std::vector<int64_t> vectorOfInts2 = {62534,62534,62537,62532};
-    //Plaintext plaintext2               = cryptoContext->MakePackedPlaintext(vectorOfInts2);
+    //to prevent cardinality leakage, we redefine set_size as an upper_bound on the set sizes
+    distrib = std::uniform_int_distribution<int>(1, 10);
+    set_size += distrib(gen);
 
-    //Plaintext plaintext1 = cryptoContext->MakePackedPlaintext(vectorOfInts1);
-    //Plaintext plaintext2 = cryptoContext->MakePackedPlaintext(vectorOfInts2);
-
-    Plaintext plaintext1 = cryptoContext->MakePackedPlaintext(parties.at(0));
-    Plaintext plaintext2 = cryptoContext->MakePackedPlaintext(parties.at(1));
-
-    // The encoded vectors are encrypted
-    auto ciphertext1 = cryptoContext->Encrypt(keyPair.publicKey, plaintext1);
-    auto ciphertext2 = cryptoContext->Encrypt(keyPair.publicKey, plaintext2);
-
-    Plaintext plaintext_test = cryptoContext->MakePackedPlaintext(vectorOfInts1);
-    auto ciphertext_test = cryptoContext->Encrypt(keyPair.publicKey, plaintext_test);
-
-    // Sample Program: Step 4 - Evaluation
-    auto ciphertextSub12     = cryptoContext->EvalSub(ciphertext1, ciphertext2);
-
-    // Sample Program: Step 5 - Decryption
-
-    Plaintext plaintextSubResult;
-    cryptoContext->Decrypt(keyPair.secretKey, ciphertextSub12, &plaintextSubResult);
-
-    //std::cout << "Plaintext #1: " << plaintext1 << std::endl;
-    //std::cout << "Plaintext #2: " << plaintext2 << std::endl;
-
-    long int exp = 65536;
- 
-    auto start = high_resolution_clock::now();
-    auto ciphertextFermat = exponentiation(ciphertextSub12, exp, cryptoContext, keyPair, SET_SIZE);
-    auto stop = high_resolution_clock::now();
-
-    Plaintext plaintextFermatResult;
-    cryptoContext->Decrypt(keyPair.secretKey, ciphertextFermat, &plaintextFermatResult);
-
-    auto duration = duration_cast<seconds>(stop - start);
-/*
-    std::cout << "Fermat: " << plaintextFermatResult << std::endl;
-
-    cout << "Time taken by Fermat: "
-         << duration.count() << " seconds" << endl;
-
+    //************PSU of 2 parties***************
     
-    for (size_t i = 0; i < 1; ++i) {
-        ciphertextFermat = cryptoContext->EvalMult(ciphertextFermat, ciphertext_test);
-    }
-
-    Plaintext plaintext_test_mult;
-    cryptoContext->Decrypt(keyPair.secretKey, ciphertextFermat, &plaintext_test_mult);
-    std::cout << "Mult test: " <<plaintext_test_mult << std::endl;
-*/
-    //We do not need to care about how many multiplications we can do after this since
-    //it will get decrypted and freshly encrypted by the decrypting party. In fact, we only
-    //Care about the number of total multiplications that we can do in general between 
-    //ciphertexts. 
-
-    //To do: Implement generation of set A rotated and copy of set B not rotated (reuse Erik code)
-    //To do: Implement MultiplyMany
-    //To do: Implement Statistics
-    //To do: Implement code for n > 2
-    //To do: Add good documentation to the code
-
-    //***************ERIK's TESTS**********************
-    parties[0][1] = parties[1][3];
-    /*
-    std::cout << "First set before PSU:" << std::endl;
-    for (size_t i = 0; i < SET_SIZE; ++i) std::cout << parties[0][i] << ' ';
-    std::cout << std::endl;
-
-    std::cout << "Second set before PSU:" << std::endl;
-    for (size_t i = 0; i < SET_SIZE; ++i) std::cout << parties[1][i] << ' ';
-    std::cout << std::endl;
-
-    std::cout << "Third set before PSU:" << std::endl;
-    for (size_t i = 0; i < SET_SIZE; ++i) std::cout << parties[2][i] << ' ';
-    std::cout << std::endl;
-    */
-    Plaintext a_ = get_rotated_plaintext(parties[0], cryptoContext, SET_SIZE);
-
-    Plaintext b_ = get_non_rotated_plaintext(parties[1], cryptoContext, SET_SIZE);
-
+    //both parties encode their databases in the required format
+    Plaintext a_ = get_rotated_plaintext(parties[0], cryptoContext, set_size);
+    Plaintext b_ = get_non_rotated_plaintext(parties[1], cryptoContext, set_size);
+    
+    //both parties encrypt their databases
     auto a = cryptoContext->Encrypt(keyPair.publicKey, a_);
-    /*
-    Plaintext O;
-    cryptoContext->Decrypt(keyPair.secretKey, a, &O);
-    std::cout << O << std::endl;
-    */
     auto b = cryptoContext->Encrypt(keyPair.publicKey, b_);
-    Ciphertext<DCRTPoly> psu_tt;
-    double u = 0;
-    size_t n_iter = 1;
-    for (size_t i = 0; i < n_iter; ++i) {
-    start = high_resolution_clock::now();
-    psu_tt = PSU(a, b, exp, cryptoContext, keyPair, SET_SIZE);
-    stop = high_resolution_clock::now();
-    duration = duration_cast<seconds>(stop - start);
-    u += duration.count();
-    }
-    //Ciphertext<DCRTPoly> psu_tt = PSU(a, b, exp, cryptoContext, keyPair, SET_SIZE);
-    std::cout << "Average time taken for a PSU of n = 2 and N = " << SET_SIZE << ": " << u/n_iter << " seconds" << std::endl;
+    //a and b are sent to the server
+
+    //the server computes psu over the encrypted databases
+    Ciphertext<DCRTPoly> psu_tt = encrypted_psu(a, b, exp, cryptoContext, keyPair, set_size);
+    //the server sends this to the client
+
+    //the client decrypts the result
     Plaintext psu_t;
     cryptoContext->Decrypt(keyPair.secretKey, psu_tt, &psu_t);
-    Plaintext psu = MultiplyMany(psu_t, cryptoContext, SET_SIZE);
-    auto d = cryptoContext->Encrypt(keyPair.publicKey, psu); //this is not necessary
-
-    //std::cout << "Second set after PSU:" << std::endl;
-
-    Plaintext B_ = get_simple_plaintext(parties[1], cryptoContext, SET_SIZE);
+    Plaintext psu = MultiplyMany(psu_t, cryptoContext, set_size);
+    auto d = cryptoContext->Encrypt(keyPair.publicKey, psu); 
+    //the client sends the list containing encryptions of 0's and/or 1's to the server
+    
+    //second party encodes and encrypts a simple copy of its database
+    Plaintext B_ = get_simple_plaintext(parties[1], cryptoContext);
     auto B = cryptoContext->Encrypt(keyPair.publicKey, B_);
+    //this is sent to the server
 
-    auto c = cryptoContext->EvalMult(B, d); //this can be performed as B * psu
-    /*****The idea is to add the plaintext modulus to wrap the negative numbers, it does not work
-    std::vector<int64_t> v_int(SET_SIZE, 1);
-    std::vector<int64_t> v_exp(SET_SIZE, exp);
-    Plaintext ptxt1 = cryptoContext->MakePackedPlaintext(v_int);
-    c = cryptoContext->EvalAdd(c, ptxt1);
-    ptxt1 = cryptoContext->MakePackedPlaintext(v_exp);
-    c = cryptoContext->EvalAdd(c, ptxt1);
-     */
-    /*
-    Plaintext c_;
-    cryptoContext->Decrypt(keyPair.secretKey, c, &c_);
-    std::vector<int64_t> v = c_->GetPackedValue();
+    //the server computes the product
+    auto c = cryptoContext->EvalMult(B, d); 
+    //psu of 2 parties finished
 
-    for (size_t i = 0; i < SET_SIZE; ++i) std::cout << v[i] << ' ';
-    std::cout << std::endl;
-*/  Ciphertext<DCRTPoly> l_b, l_c; //REMOVE after computing the for
-    u = 0;
-    for (size_t j = 0; j < n_iter; ++j) {
-    //std::cout << "Now we try the PSU of n=3 parties..." << std::endl;
-    parties[2][0] = parties[0][1];
-    parties[2][1] = parties[1][2];
-    a_ = get_rotated_plaintext(parties[0], cryptoContext, SET_SIZE);
-    b_ = get_non_rotated_plaintext(parties[1], cryptoContext, SET_SIZE);
-    auto b__ = get_rotated_plaintext(parties[1], cryptoContext, SET_SIZE);
-    Plaintext c_ = get_non_rotated_plaintext(parties[2], cryptoContext, SET_SIZE);
+    //***************PSU of 3 parties***************
 
+    //l_b will be the lists conaining encryptions of 0's and/or 1's to be multiplied by B's database
+    //l_c will be the lists conaining encryptions of 0's and/or 1's to be multiplied by C's database
+    Ciphertext<DCRTPoly> l_b, l_c; 
+
+    //parties encode their databases in the required format
+    a_ = get_rotated_plaintext(parties[0], cryptoContext, set_size);
+    b_ = get_non_rotated_plaintext(parties[1], cryptoContext, set_size);
+    auto b__ = get_rotated_plaintext(parties[1], cryptoContext, set_size);
+    Plaintext c_ = get_non_rotated_plaintext(parties[2], cryptoContext, set_size);
+
+    //parties encrypt their databases
     a = cryptoContext->Encrypt(keyPair.publicKey, a_);
     b = cryptoContext->Encrypt(keyPair.publicKey, b_);
     auto b_rot = cryptoContext->Encrypt(keyPair.publicKey, b__);
     c = cryptoContext->Encrypt(keyPair.publicKey, c_);
+    //a, b, b_rot and c are sent to the server
 
-    Plaintext A_ = get_simple_plaintext(parties[0], cryptoContext, SET_SIZE);
+    //parties encode and encrypt one simple copy of their databases
+    Plaintext A_ = get_simple_plaintext(parties[0], cryptoContext);
     auto A = cryptoContext->Encrypt(keyPair.publicKey, A_);
 
-    B_ = get_simple_plaintext(parties[1], cryptoContext, SET_SIZE);
+    B_ = get_simple_plaintext(parties[1], cryptoContext);
     B = cryptoContext->Encrypt(keyPair.publicKey, B_);
 
-    Plaintext C_ = get_simple_plaintext(parties[2], cryptoContext, SET_SIZE);
+    Plaintext C_ = get_simple_plaintext(parties[2], cryptoContext);
     auto C = cryptoContext->Encrypt(keyPair.publicKey, C_);
-
-    start = high_resolution_clock::now();
+    //A, B and C are sent to the server
 
     //B*PSU(A, B)
-    psu_tt = PSU(a, b, exp, cryptoContext, keyPair, SET_SIZE);
+    //the server computes psu(a, b) over the encrypted databases
+    psu_tt = encrypted_psu(a, b, exp, cryptoContext, keyPair, set_size);
+    //the server sends this to the client and the client decrypts the result
     cryptoContext->Decrypt(keyPair.secretKey, psu_tt, &psu_t);
-    psu = MultiplyMany(psu_t, cryptoContext, SET_SIZE);
-    d = cryptoContext->Encrypt(keyPair.publicKey, psu);
-    //auto l_b = d; //list for set B
-    l_b = d; // REMOVE after computing the for
-    B = cryptoContext->EvalMult(B, d);
+    psu = MultiplyMany(psu_t, cryptoContext, set_size);
+    l_b = cryptoContext->Encrypt(keyPair.publicKey, psu);
+    //the client sends the list containing encryptions of 0's and/or 1's to the server
+    B = cryptoContext->EvalMult(B, l_b);
 
-    //C*PSU(A, C)
-    psu_tt = PSU(a, c, exp, cryptoContext, keyPair, SET_SIZE);
+    //l_c_a=PSU(A, C)
+    //the server computes psu(a, c) over the encrypted databases
+    psu_tt = encrypted_psu(a, c, exp, cryptoContext, keyPair, set_size);
+    //the server sends this to the client and the client decrypts the result
     cryptoContext->Decrypt(keyPair.secretKey, psu_tt, &psu_t);
-    psu = MultiplyMany(psu_t, cryptoContext, SET_SIZE);
-    d = cryptoContext->Encrypt(keyPair.publicKey, psu);
-    auto l_c_ = d;
-    C = cryptoContext->EvalMult(C, d);
+    psu = MultiplyMany(psu_t, cryptoContext, set_size);
+    auto l_c_a = psu;
 
-    //C*PSU(B, C) IMPORTANT: B must be rotated!!
-    psu_tt = PSU(b_rot, c, exp, cryptoContext, keyPair, SET_SIZE);
+    //l_c_b=PSU(B, C) 
+    //the server computes psu(b_rot, c) over the encrypted databases
+    psu_tt = encrypted_psu(b_rot, c, exp, cryptoContext, keyPair, set_size);
+    //the server sends this to the client and the client decrypts the result
     cryptoContext->Decrypt(keyPair.secretKey, psu_tt, &psu_t);
-    psu = MultiplyMany(psu_t, cryptoContext, SET_SIZE);
-    d = cryptoContext->Encrypt(keyPair.publicKey, psu);
-    C = cryptoContext->EvalMult(C, d);
-    //auto l_c = cryptoContext->EvalMult(l_c_, d); //list for set C
-    l_c = cryptoContext->EvalMult(l_c_, d); // REMOVE after for
+    psu = MultiplyMany(psu_t, cryptoContext, set_size);
+    auto l_c_b = psu;
 
-    stop = high_resolution_clock::now();
-    duration = duration_cast<seconds>(stop - start);
-    u += duration.count();
+    //now the client computes l_c_a*l_c_b (over the plaintext)
+    std::vector<int64_t> v1, v2;
+    v1 = l_c_a->GetPackedValue();
+    v2 = l_c_b->GetPackedValue();
+    for (size_t i = 0; i < set_size; ++i) {
+        v1[i] = v1[i]*v2[i];
     }
-    std::cout << "Average time taken for a PSU of n = 3 and N = " << SET_SIZE << ": " << u/n_iter << " seconds" << std::endl;
+    l_c_a = cryptoContext->MakePackedPlaintext(v1);
+    l_c = cryptoContext->Encrypt(keyPair.publicKey, l_c_a);
+    //the client sends the list containing encryptions of 0's and/or 1's to the server
+    //the server computes the product
+    C = cryptoContext->EvalMult(C, l_c);
+    //psu of 3 parties finished
+    
+    //***************Computing simple statistics***************
+    //now we the server computes homomorphically some statistics: the average age 
 
-    //Now we will compute some statistics
-    std::uniform_int_distribution<int> dist(0, 60);
+    //we generate random sets, one for each party
+    std::uniform_int_distribution<> dist(0, 60);
     std::vector<std::vector<int64_t>> ages(3);
 
     for (size_t i = 0; i < 3; ++i) {
-        for (size_t j = 0; j < SET_SIZE; ++j) {
+        for (size_t j = 0; j < set_parties[i].size(); ++j) {
             ages[i].push_back(dist(gen));
         }
     }
 
-    //we add some collisions
-    ages[0][1] = ages[1][3];
-    ages[2][0] = ages[0][1];
-    ages[2][1] = ages[1][2];
-
-    Plaintext a_age = get_simple_plaintext(ages[0], cryptoContext, SET_SIZE);
-    Plaintext b_age = get_simple_plaintext(ages[1], cryptoContext, SET_SIZE);
-    Plaintext c_age = get_simple_plaintext(ages[2], cryptoContext, SET_SIZE);
+    Plaintext a_age = get_simple_plaintext(ages[0], cryptoContext);
+    Plaintext b_age = get_simple_plaintext(ages[1], cryptoContext);
+    Plaintext c_age = get_simple_plaintext(ages[2], cryptoContext);
 
     auto A_age = cryptoContext->Encrypt(keyPair.publicKey, a_age);
     auto B_age = cryptoContext->Encrypt(keyPair.publicKey, b_age);
     auto C_age = cryptoContext->Encrypt(keyPair.publicKey, c_age);
 
-    //now multiply each ciphertext by its corresponding list
+    //now the server multiplies each ciphertext by its corresponding list
     B_age = cryptoContext->EvalMult(B_age, l_b);
     C_age = cryptoContext->EvalMult(C_age, l_c);
 
-    //we compute |A U B U C|
-    auto card = cryptoContext->EvalAdd(l_b, l_c);
-    std::vector<int64_t> p(SET_SIZE, 1);
+    //the server computes |A U B U C| homomorphically
+    //we assume that party A sends the server a ciphertext, a_column, containig |A| encryptions of 1's 
+    //and the rest 0's. Therefore we do not leak the cardinality of any party's database
+    std::vector<int64_t> p(set_parties[0].size(), 1);
     Plaintext p_ = cryptoContext->MakePackedPlaintext(p);
-    card = cryptoContext->EvalAdd(card, p_);
-    //send card to decrypting party
+    auto a_column = cryptoContext->Encrypt(keyPair.publicKey, p_);
 
-    //decrypting party computes
+    auto card = cryptoContext->EvalAdd(l_b, l_c);
+    card = cryptoContext->EvalAdd(card, a_column);
+    //card is sent to the client and the client decrypts the result
     cryptoContext->Decrypt(keyPair.secretKey, card, &p_);
     std::vector<int64_t> v_card;
     v_card = p_->GetPackedValue();
     long int cardinality = 0;
-    for (size_t i = 0; i < SET_SIZE; ++i) cardinality += v_card[i];
+    for (size_t i = 0; i < set_size; ++i) cardinality += v_card[i];
 
-
-    //we compute the sum of the age over the ciphertexts
+    //the server computes the sum of the age over the ciphertexts
     auto SUM_age = A_age;
     SUM_age = cryptoContext->EvalAdd(SUM_age, B_age);
     SUM_age = cryptoContext->EvalAdd(SUM_age, C_age);
-    //send SUM_age to decrypting party
-
-    //decrypting party computes
+    //SUM_age is sent to the client and the client decrypts the result
     Plaintext sum_age;
     cryptoContext->Decrypt(keyPair.secretKey, SUM_age, &sum_age);
     std::vector<int64_t> v_age;
     v_age = sum_age->GetPackedValue();
     long int total_age_sum = 0;
-    for (size_t i = 0; i < SET_SIZE; ++i) total_age_sum += v_age[i];
+    for (size_t i = 0; i < set_size; ++i) total_age_sum += v_age[i];
 
     std::cout << "The average age is " << total_age_sum / (double)cardinality << std::endl;
-    std::cout << "|A U B U C| = " << cardinality << std::endl;
-/*
-    for (size_t i = 0; i < 3; ++i) {
-        for (size_t j = 0; j < SET_SIZE; ++j) {
-            std::cout << parties[i][j] << ' ';
-        }
-        std::cout << std::endl;
+    std::cout << "Homomorphically computed |A U B U C| = " << cardinality << std::endl;
+
+    std::set<int64_t> actual_union;
+    for (size_t i = 0; i < n_parties; ++i) {
+        std::set_union(actual_union.begin(), actual_union.end(),
+            set_parties[i].begin(), set_parties[i].end(),
+            std::inserter(actual_union, actual_union.begin()));
     }
-*/
-/*
-    for (size_t i = 0; i < 3; ++i) {
-        for (size_t j = 0; j < SET_SIZE; ++j) {
-            std::cout << ages[i][j] << ' ';
-        }
-        std::cout << std::endl;
-    }
-*/
-/**************PRINT SETS AFTER PSU WITH n=3
-    //A:
+    std::cout << "Real |A U B U C| = " << actual_union.size() << std::endl;
+
+    //***************Compare the result***************
     cryptoContext->Decrypt(keyPair.secretKey, A, &A_);
-    v = A_->GetPackedValue();
-    std::cout << "First set after PSU, n=3:";
-    for (size_t i = 0; i < SET_SIZE; ++i) std::cout << v[i] << ' ';
-    std::cout << std::endl;
-
-    //B:
     cryptoContext->Decrypt(keyPair.secretKey, B, &B_);
-    v = B_->GetPackedValue();
-    std::cout << "Second set after PSU, n=3:";
-    for (size_t i = 0; i < SET_SIZE; ++i) std::cout << v[i] << ' ';
-    std::cout << std::endl;
-
-    //C:
     cryptoContext->Decrypt(keyPair.secretKey, C, &C_);
-    //std::cout << C_ << std::endl;
-    v = C_->GetPackedValue();
-    std::cout << "Third set after PSU, n=3:";
-    for (size_t i = 0; i < SET_SIZE; ++i) std::cout << v[i] << ' ';
-    std::cout << std::endl;
-*/
+    std::vector<std::vector<int64_t>> v_result(n_parties);
+    v_result[0] = A_->GetPackedValue();
+    v_result[1] = B_->GetPackedValue();
+    v_result[2] = C_->GetPackedValue();
+    for (size_t i = 0; i < n_parties; ++i) {
+        for (size_t j = 0; j < set_parties[i].size(); ++j) {
+            if (v_result[i][j] != 0) {
+                if (actual_union.find(v_result[i][j]) == actual_union.end()) {
+                    std::cout << "Something went wrong :(" << std::endl;
+                }
+                else {
+                    actual_union.erase(v_result[i][j]);
+                }
+            }
+        }
+    }
+
+    if (actual_union.size() == 0) {
+        std::cout << "PSU performed correctly" << std::endl;
+    }
+    else {
+        std::cout << "Something went wrong :(" << std::endl;
+    }
+
     return 0;
 
 }
